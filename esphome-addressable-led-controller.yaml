@@ -1,0 +1,262 @@
+esphome:
+  name: ###
+  friendly_name: ###
+
+esp32:
+  board: esp32-c6-devkitc-1
+  framework:
+    type: esp-idf
+
+logger:
+
+api:
+  encryption:
+    key: "add your own"
+
+ota:
+  - platform: esphome
+    password: "add ypur own"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  ap:
+    ssid: "###"
+    password: "add your own"
+
+captive_portal:
+
+globals:
+  - id: wipe_running
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: last_control_on
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: last_effect_active
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+output:
+  - platform: template
+    id: control_red
+    type: float
+    write_action:
+      - lambda: return;
+
+  - platform: template
+    id: control_green
+    type: float
+    write_action:
+      - lambda: return;
+
+  - platform: template
+    id: control_blue
+    type: float
+    write_action:
+      - lambda: return;
+
+light:
+  - platform: rgb
+    id: control_light
+    name: "WS28 LED Strip"
+    red: control_red
+    green: control_green
+    blue: control_blue
+    restore_mode: RESTORE_DEFAULT_OFF
+    default_transition_length: 0s
+
+    effects:
+      - lambda:
+          name: "Rainbow"
+          update_interval: 1s
+          lambda: |-
+            return;
+      - lambda:
+          name: "Color Wipe"
+          update_interval: 1s
+          lambda: |-
+            return;
+      - lambda:
+          name: "Scanner"
+          update_interval: 1s
+          lambda: |-
+            return;
+      - lambda:
+          name: "Twinkle"
+          update_interval: 1s
+          lambda: |-
+            return;
+      - lambda:
+          name: "Fireworks"
+          update_interval: 1s
+          lambda: |-
+            return;
+      - lambda:
+          name: "Flicker"
+          update_interval: 1s
+          lambda: |-
+            return;
+
+    on_state:
+      then:
+        - lambda: |-
+            const bool current_on = id(control_light).current_values.is_on();
+            const bool effect_active = std::string(id(control_light).get_effect_name()) != "None";
+
+            if (id(wipe_running)) {
+              return;
+            }
+
+            if (current_on != id(last_control_on)) {
+
+              // OFF -> ON
+              if (!id(last_control_on) && current_on) {
+                id(last_control_on) = true;
+                id(last_effect_active) = effect_active;
+
+                if (effect_active) {
+                  id(mirror_effect_to_physical).execute();
+                } else {
+                  id(wipe_on).execute();
+                }
+                return;
+              }
+
+              // ON -> OFF
+              if (id(last_control_on) && !current_on) {
+                const bool previous_effect_active = id(last_effect_active);
+
+                id(last_control_on) = false;
+                id(last_effect_active) = false;
+
+                if (previous_effect_active) {
+                  auto call = id(physical_strip).turn_off();
+                  call.perform();
+                } else {
+                  id(wipe_off).execute();
+                }
+                return;
+              }
+            }
+
+            if (current_on) {
+              id(last_effect_active) = effect_active;
+
+              if (effect_active) {
+                id(mirror_effect_to_physical).execute();
+              } else {
+                id(mirror_direct_to_physical).execute();
+              }
+            }
+
+  - platform: esp32_rmt_led_strip
+    id: physical_strip
+    internal: true
+    chipset: ws2812
+    pin: GPIO4
+    num_leds: 80
+    rgb_order: GRB
+    restore_mode: ALWAYS_OFF
+    default_transition_length: 0s
+
+    effects:
+      - addressable_rainbow:
+          name: "Rainbow"
+      - addressable_color_wipe:
+          name: "Color Wipe"
+      - addressable_scan:
+          name: "Scanner"
+      - addressable_twinkle:
+          name: "Twinkle"
+      - addressable_fireworks:
+          name: "Fireworks"
+      - addressable_flicker:
+          name: "Flicker"
+
+script:
+  - id: mirror_direct_to_physical
+    mode: restart
+    then:
+      - lambda: |-
+          auto call = id(physical_strip).turn_on();
+          call.set_effect("None");
+          call.set_brightness(id(control_light).current_values.get_brightness());
+          call.set_red(id(control_light).current_values.get_red());
+          call.set_green(id(control_light).current_values.get_green());
+          call.set_blue(id(control_light).current_values.get_blue());
+          call.perform();
+
+  - id: mirror_effect_to_physical
+    mode: restart
+    then:
+      - lambda: |-
+          auto call = id(physical_strip).turn_on();
+          call.set_brightness(id(control_light).current_values.get_brightness());
+          call.set_red(id(control_light).current_values.get_red());
+          call.set_green(id(control_light).current_values.get_green());
+          call.set_blue(id(control_light).current_values.get_blue());
+          call.set_effect(id(control_light).get_effect_name());
+          call.perform();
+
+  - id: wipe_on
+    mode: restart
+    then:
+      - lambda: 'id(wipe_running) = true;'
+
+      - light.turn_on:
+          id: physical_strip
+          brightness: 100%
+          red: 0%
+          green: 0%
+          blue: 0%
+
+      - light.addressable_set:
+          id: physical_strip
+          range_from: 0
+          range_to: 79
+          red: 0%
+          green: 0%
+          blue: 0%
+
+      - repeat:
+          count: 80
+          then:
+            - light.addressable_set:
+                id: physical_strip
+                range_from: !lambda 'return iteration;'
+                range_to: !lambda 'return iteration;'
+                color_brightness: !lambda 'return id(control_light).current_values.get_brightness();'
+                red: !lambda 'return id(control_light).current_values.get_red();'
+                green: !lambda 'return id(control_light).current_values.get_green();'
+                blue: !lambda 'return id(control_light).current_values.get_blue();'
+            - delay: 15ms
+
+      - script.execute: mirror_direct_to_physical
+      - lambda: 'id(wipe_running) = false;'
+
+  - id: wipe_off
+    mode: restart
+    then:
+      - lambda: 'id(wipe_running) = true;'
+
+      - repeat:
+          count: 80
+          then:
+            - light.addressable_set:
+                id: physical_strip
+                range_from: !lambda 'return 79 - iteration;'
+                range_to: !lambda 'return 79 - iteration;'
+                red: 0%
+                green: 0%
+                blue: 0%
+            - delay: 10ms
+
+      - light.turn_off: physical_strip
+      - lambda: 'id(wipe_running) = false;'
