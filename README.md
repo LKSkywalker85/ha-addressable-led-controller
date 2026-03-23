@@ -17,6 +17,7 @@ Advantages:
 - The ESP keeps full control of the LED strip logic
 - Easily extendable with new effects and behaviors
 
+When I uploaded the code some things were not a 100% right, ans some adjustments had to be made due tue ESO Home Builder updates! But now this file attatched should be save to use and even gives you to values in HA. Direction of the stripe as well as number of the LED's in the physical stripe!
 
 ## Example
 
