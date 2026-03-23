@@ -1,6 +1,30 @@
 esphome:
-  name: ###
-  friendly_name: ###
+  name: ws28-general-controller-via-esp
+  friendly_name: WS28 general controller via ESP
+  on_boot:
+    priority: -100
+    then:
+      - delay: 2s
+      - lambda: |-
+          id(last_control_on) = id(control_light).current_values.is_on();
+          auto effect_name = std::string(id(control_light).get_effect_name().c_str());
+          id(last_effect_active) = (effect_name != "None");
+          id(boot_ready) = true;
+      - if:
+          condition:
+            light.is_on: control_light
+          then:
+            - if:
+                condition:
+                  lambda: |-
+                    auto effect_name = std::string(id(control_light).get_effect_name().c_str());
+                    return effect_name != "None";
+                then:
+                  - script.execute: mirror_effect_to_physical
+                else:
+                  - script.execute: mirror_direct_to_physical
+          else:
+            - light.turn_off: physical_strip
 
 esp32:
   board: esp32-c6-devkitc-1
@@ -11,19 +35,19 @@ logger:
 
 api:
   encryption:
-    key: "add your own"
+    key: "Sk+J9xRe6LB+7/eFU5OsH/UzdK465S/uP4OfyMx76+M="
 
 ota:
   - platform: esphome
-    password: "add ypur own"
+    password: "bfda02c62177d4253dd2f7a6420d1d03"
 
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
 
   ap:
-    ssid: "###"
-    password: "add your own"
+    ssid: "Ws28-General-Controller-Via-Esp"
+    password: "5fMwSxO86tUe"
 
 captive_portal:
 
@@ -42,6 +66,62 @@ globals:
     type: bool
     restore_value: no
     initial_value: "false"
+
+  - id: wipe_direction
+    type: int
+    restore_value: yes
+    initial_value: "0"
+
+  - id: boot_ready
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: actual_led_count
+    type: int
+    restore_value: yes
+    initial_value: "88"
+
+number:
+  - platform: template
+    name: "Active LED Count"
+    id: active_led_count_slider
+    optimistic: true
+    restore_value: true
+    min_value: 1
+    max_value: 1000
+    step: 1
+    initial_value: 88
+    mode: slider
+    entity_category: config
+    set_action:
+      - lambda: |-
+          id(actual_led_count) = (int) x;
+
+select:
+  - platform: template
+    name: "Wipe Direction"
+    id: wipe_direction_select
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    options:
+      - "Left → Right"
+      - "Right → Left"
+      - "Center → Outside"
+      - "Outside → Center"
+    initial_option: "Left → Right"
+    set_action:
+      - lambda: |-
+          if (x == "Left → Right") {
+            id(wipe_direction) = 0;
+          } else if (x == "Right → Left") {
+            id(wipe_direction) = 1;
+          } else if (x == "Center → Outside") {
+            id(wipe_direction) = 2;
+          } else if (x == "Outside → Center") {
+            id(wipe_direction) = 3;
+          }
 
 output:
   - platform: template
@@ -79,27 +159,12 @@ light:
           lambda: |-
             return;
       - lambda:
-          name: "Color Wipe"
-          update_interval: 1s
-          lambda: |-
-            return;
-      - lambda:
-          name: "Scanner"
-          update_interval: 1s
-          lambda: |-
-            return;
-      - lambda:
           name: "Twinkle"
           update_interval: 1s
           lambda: |-
             return;
       - lambda:
-          name: "Fireworks"
-          update_interval: 1s
-          lambda: |-
-            return;
-      - lambda:
-          name: "Flicker"
+          name: "Piano"
           update_interval: 1s
           lambda: |-
             return;
@@ -108,9 +173,10 @@ light:
       then:
         - lambda: |-
             const bool current_on = id(control_light).current_values.is_on();
-            const bool effect_active = std::string(id(control_light).get_effect_name()) != "None";
+            auto effect_name = std::string(id(control_light).get_effect_name().c_str());
+            const bool effect_active = effect_name != "None";
 
-            if (id(wipe_running)) {
+            if (!id(boot_ready) || id(wipe_running)) {
               return;
             }
 
@@ -161,24 +227,123 @@ light:
     internal: true
     chipset: ws2812
     pin: GPIO4
-    num_leds: 80
+    num_leds: 1000
     rgb_order: GRB
     restore_mode: ALWAYS_OFF
     default_transition_length: 0s
 
     effects:
-      - addressable_rainbow:
+      - addressable_lambda:
           name: "Rainbow"
-      - addressable_color_wipe:
-          name: "Color Wipe"
-      - addressable_scan:
-          name: "Scanner"
-      - addressable_twinkle:
+          update_interval: 16ms
+          lambda: |-
+            const int active_leds = id(actual_led_count);
+            const int total_leds = it.size();
+
+            if (initial_run) {
+              for (int i = 0; i < total_leds; i++) {
+                it[i] = Color::BLACK;
+                it[i].set_effect_data(0);
+              }
+            }
+
+            ESPHSVColor hsv;
+            hsv.value = 255;
+            hsv.saturation = 240;
+
+            uint16_t hue = (millis() * 10) % 0xFFFF;
+            const uint16_t width = 50;
+            const uint16_t add = 0xFFFF / width;
+
+            for (int i = 0; i < total_leds; i++) {
+              if (i < active_leds) {
+                hsv.hue = hue >> 8;
+                it[i] = hsv;
+                hue += add;
+              } else {
+                it[i] = Color::BLACK;
+                it[i].set_effect_data(0);
+              }
+            }
+
+      - addressable_lambda:
           name: "Twinkle"
-      - addressable_fireworks:
-          name: "Fireworks"
-      - addressable_flicker:
-          name: "Flicker"
+          update_interval: 4ms
+          lambda: |-
+            static uint32_t last_progress = 0;
+
+            const uint32_t now = millis();
+            const uint32_t progress_interval = 4;
+            const float twinkle_probability = 0.05f;
+
+            const int active_leds = id(actual_led_count);
+            const int total_leds = it.size();
+
+            if (initial_run) {
+              last_progress = now;
+              for (int i = 0; i < total_leds; i++) {
+                it[i] = Color::BLACK;
+                it[i].set_effect_data(0);
+              }
+              return;
+            }
+
+            uint8_t pos_add = 0;
+            if (now - last_progress > progress_interval) {
+              const uint32_t pos_add32 = (now - last_progress) / progress_interval;
+              pos_add = pos_add32;
+              last_progress += pos_add32 * progress_interval;
+            }
+
+            for (int i = 0; i < total_leds; i++) {
+              if (i >= active_leds) {
+                it[i] = Color::BLACK;
+                it[i].set_effect_data(0);
+                continue;
+              }
+
+              if (it[i].get_effect_data() != 0) {
+                const uint8_t sine = half_sin8(it[i].get_effect_data());
+                it[i] = current_color * sine;
+
+                const uint8_t old_pos = it[i].get_effect_data();
+                const uint8_t new_pos = old_pos + pos_add;
+
+                if (new_pos < old_pos) {
+                  it[i].set_effect_data(0);
+                } else {
+                  it[i].set_effect_data(new_pos);
+                }
+              } else {
+                it[i] = Color::BLACK;
+              }
+            }
+
+            if (active_leds > 0) {
+              while (random_float() < twinkle_probability) {
+                const size_t pos = random_uint32() % active_leds;
+                if (it[pos].get_effect_data() != 0) {
+                  continue;
+                }
+                it[pos].set_effect_data(1);
+              }
+            }
+
+      - addressable_lambda:
+          name: "Piano"
+          update_interval: 50ms
+          lambda: |-
+            const int active_leds = id(actual_led_count);
+            const int total_leds = it.size();
+
+            for (int i = 0; i < total_leds; i++) {
+              if (i < active_leds) {
+                it[i] = current_color;
+              } else {
+                it[i] = Color::BLACK;
+                it[i].set_effect_data(0);
+              }
+            }
 
 script:
   - id: mirror_direct_to_physical
@@ -186,12 +351,34 @@ script:
     then:
       - lambda: |-
           auto call = id(physical_strip).turn_on();
-          call.set_effect("None");
-          call.set_brightness(id(control_light).current_values.get_brightness());
-          call.set_red(id(control_light).current_values.get_red());
-          call.set_green(id(control_light).current_values.get_green());
-          call.set_blue(id(control_light).current_values.get_blue());
+          call.set_effect(std::string("None"));
+          call.set_brightness(1.0f);
+          call.set_red(0.0f);
+          call.set_green(0.0f);
+          call.set_blue(0.0f);
           call.perform();
+
+      - light.addressable_set:
+          id: physical_strip
+          range_from: 0
+          range_to: !lambda 'return id(actual_led_count) - 1;'
+          color_brightness: !lambda 'return id(control_light).current_values.get_brightness();'
+          red: !lambda 'return id(control_light).current_values.get_red();'
+          green: !lambda 'return id(control_light).current_values.get_green();'
+          blue: !lambda 'return id(control_light).current_values.get_blue();'
+
+      - if:
+          condition:
+            lambda: 'return id(actual_led_count) < 1000;'
+          then:
+            - light.addressable_set:
+                id: physical_strip
+                range_from: !lambda 'return id(actual_led_count);'
+                range_to: 999
+                red: 0%
+                green: 0%
+                blue: 0%
+                color_brightness: 100%
 
   - id: mirror_effect_to_physical
     mode: restart
@@ -202,7 +389,8 @@ script:
           call.set_red(id(control_light).current_values.get_red());
           call.set_green(id(control_light).current_values.get_green());
           call.set_blue(id(control_light).current_values.get_blue());
-          call.set_effect(id(control_light).get_effect_name());
+          auto effect_name = std::string(id(control_light).get_effect_name().c_str());
+          call.set_effect(effect_name);
           call.perform();
 
   - id: wipe_on
@@ -210,33 +398,112 @@ script:
     then:
       - lambda: 'id(wipe_running) = true;'
 
-      - light.turn_on:
-          id: physical_strip
-          brightness: 100%
-          red: 0%
-          green: 0%
-          blue: 0%
+      - lambda: |-
+          auto call = id(physical_strip).turn_on();
+          call.set_effect(std::string("None"));
+          call.set_brightness(1.0f);
+          call.set_red(0.0f);
+          call.set_green(0.0f);
+          call.set_blue(0.0f);
+          call.perform();
 
+      # Erst kompletten Strip sicher auf aus setzen
       - light.addressable_set:
           id: physical_strip
           range_from: 0
-          range_to: 79
+          range_to: 999
           red: 0%
           green: 0%
           blue: 0%
+          color_brightness: 100%
 
-      - repeat:
-          count: 80
+      # Left -> Right
+      - if:
+          condition:
+            lambda: 'return id(wipe_direction) == 0;'
           then:
-            - light.addressable_set:
-                id: physical_strip
-                range_from: !lambda 'return iteration;'
-                range_to: !lambda 'return iteration;'
-                color_brightness: !lambda 'return id(control_light).current_values.get_brightness();'
-                red: !lambda 'return id(control_light).current_values.get_red();'
-                green: !lambda 'return id(control_light).current_values.get_green();'
-                blue: !lambda 'return id(control_light).current_values.get_blue();'
-            - delay: 15ms
+            - repeat:
+                count: !lambda 'return id(actual_led_count);'
+                then:
+                  - light.addressable_set:
+                      id: physical_strip
+                      range_from: !lambda 'return iteration;'
+                      range_to: !lambda 'return iteration;'
+                      color_brightness: !lambda 'return id(control_light).current_values.get_brightness();'
+                      red: !lambda 'return id(control_light).current_values.get_red();'
+                      green: !lambda 'return id(control_light).current_values.get_green();'
+                      blue: !lambda 'return id(control_light).current_values.get_blue();'
+                  - delay: 15ms
+
+      # Right -> Left
+      - if:
+          condition:
+            lambda: 'return id(wipe_direction) == 1;'
+          then:
+            - repeat:
+                count: !lambda 'return id(actual_led_count);'
+                then:
+                  - light.addressable_set:
+                      id: physical_strip
+                      range_from: !lambda 'return id(actual_led_count) - 1 - iteration;'
+                      range_to: !lambda 'return id(actual_led_count) - 1 - iteration;'
+                      color_brightness: !lambda 'return id(control_light).current_values.get_brightness();'
+                      red: !lambda 'return id(control_light).current_values.get_red();'
+                      green: !lambda 'return id(control_light).current_values.get_green();'
+                      blue: !lambda 'return id(control_light).current_values.get_blue();'
+                  - delay: 15ms
+
+      # Center -> Outside
+      - if:
+          condition:
+            lambda: 'return id(wipe_direction) == 2;'
+          then:
+            - repeat:
+                count: !lambda 'return id(actual_led_count) / 2;'
+                then:
+                  - light.addressable_set:
+                      id: physical_strip
+                      range_from: !lambda 'return (id(actual_led_count) / 2 - 1) - iteration;'
+                      range_to: !lambda 'return (id(actual_led_count) / 2 - 1) - iteration;'
+                      color_brightness: !lambda 'return id(control_light).current_values.get_brightness();'
+                      red: !lambda 'return id(control_light).current_values.get_red();'
+                      green: !lambda 'return id(control_light).current_values.get_green();'
+                      blue: !lambda 'return id(control_light).current_values.get_blue();'
+                  - light.addressable_set:
+                      id: physical_strip
+                      range_from: !lambda 'return (id(actual_led_count) / 2) + iteration;'
+                      range_to: !lambda 'return (id(actual_led_count) / 2) + iteration;'
+                      color_brightness: !lambda 'return id(control_light).current_values.get_brightness();'
+                      red: !lambda 'return id(control_light).current_values.get_red();'
+                      green: !lambda 'return id(control_light).current_values.get_green();'
+                      blue: !lambda 'return id(control_light).current_values.get_blue();'
+                  - delay: 15ms
+
+      # Outside -> Center
+      - if:
+          condition:
+            lambda: 'return id(wipe_direction) == 3;'
+          then:
+            - repeat:
+                count: !lambda 'return id(actual_led_count) / 2;'
+                then:
+                  - light.addressable_set:
+                      id: physical_strip
+                      range_from: !lambda 'return iteration;'
+                      range_to: !lambda 'return iteration;'
+                      color_brightness: !lambda 'return id(control_light).current_values.get_brightness();'
+                      red: !lambda 'return id(control_light).current_values.get_red();'
+                      green: !lambda 'return id(control_light).current_values.get_green();'
+                      blue: !lambda 'return id(control_light).current_values.get_blue();'
+                  - light.addressable_set:
+                      id: physical_strip
+                      range_from: !lambda 'return id(actual_led_count) - 1 - iteration;'
+                      range_to: !lambda 'return id(actual_led_count) - 1 - iteration;'
+                      color_brightness: !lambda 'return id(control_light).current_values.get_brightness();'
+                      red: !lambda 'return id(control_light).current_values.get_red();'
+                      green: !lambda 'return id(control_light).current_values.get_green();'
+                      blue: !lambda 'return id(control_light).current_values.get_blue();'
+                  - delay: 15ms
 
       - script.execute: mirror_direct_to_physical
       - lambda: 'id(wipe_running) = false;'
@@ -246,17 +513,87 @@ script:
     then:
       - lambda: 'id(wipe_running) = true;'
 
-      - repeat:
-          count: 80
+      # Left -> Right on wipe_on => Right -> Left on wipe_off
+      - if:
+          condition:
+            lambda: 'return id(wipe_direction) == 0;'
           then:
-            - light.addressable_set:
-                id: physical_strip
-                range_from: !lambda 'return 79 - iteration;'
-                range_to: !lambda 'return 79 - iteration;'
-                red: 0%
-                green: 0%
-                blue: 0%
-            - delay: 10ms
+            - repeat:
+                count: !lambda 'return id(actual_led_count);'
+                then:
+                  - light.addressable_set:
+                      id: physical_strip
+                      range_from: !lambda 'return id(actual_led_count) - 1 - iteration;'
+                      range_to: !lambda 'return id(actual_led_count) - 1 - iteration;'
+                      red: 0%
+                      green: 0%
+                      blue: 0%
+                  - delay: 10ms
+
+      # Right -> Left on wipe_on => Left -> Right on wipe_off
+      - if:
+          condition:
+            lambda: 'return id(wipe_direction) == 1;'
+          then:
+            - repeat:
+                count: !lambda 'return id(actual_led_count);'
+                then:
+                  - light.addressable_set:
+                      id: physical_strip
+                      range_from: !lambda 'return iteration;'
+                      range_to: !lambda 'return iteration;'
+                      red: 0%
+                      green: 0%
+                      blue: 0%
+                  - delay: 10ms
+
+      # Center -> Outside on wipe_on => Outside -> Center on wipe_off
+      - if:
+          condition:
+            lambda: 'return id(wipe_direction) == 2;'
+          then:
+            - repeat:
+                count: !lambda 'return id(actual_led_count) / 2;'
+                then:
+                  - light.addressable_set:
+                      id: physical_strip
+                      range_from: !lambda 'return iteration;'
+                      range_to: !lambda 'return iteration;'
+                      red: 0%
+                      green: 0%
+                      blue: 0%
+                  - light.addressable_set:
+                      id: physical_strip
+                      range_from: !lambda 'return id(actual_led_count) - 1 - iteration;'
+                      range_to: !lambda 'return id(actual_led_count) - 1 - iteration;'
+                      red: 0%
+                      green: 0%
+                      blue: 0%
+                  - delay: 10ms
+
+      # Outside -> Center on wipe_on => Center -> Outside on wipe_off
+      - if:
+          condition:
+            lambda: 'return id(wipe_direction) == 3;'
+          then:
+            - repeat:
+                count: !lambda 'return id(actual_led_count) / 2;'
+                then:
+                  - light.addressable_set:
+                      id: physical_strip
+                      range_from: !lambda 'return (id(actual_led_count) / 2 - 1) - iteration;'
+                      range_to: !lambda 'return (id(actual_led_count) / 2 - 1) - iteration;'
+                      red: 0%
+                      green: 0%
+                      blue: 0%
+                  - light.addressable_set:
+                      id: physical_strip
+                      range_from: !lambda 'return (id(actual_led_count) / 2) + iteration;'
+                      range_to: !lambda 'return (id(actual_led_count) / 2) + iteration;'
+                      red: 0%
+                      green: 0%
+                      blue: 0%
+                  - delay: 10ms
 
       - light.turn_off: physical_strip
       - lambda: 'id(wipe_running) = false;'
